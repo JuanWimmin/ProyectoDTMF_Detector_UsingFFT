@@ -1,112 +1,58 @@
-% Leer archivo de audio
-[x, fs] = audioread('AUDIOPRUEBA.wav'); 
-x = x(:,1); % solo un canal
-x_length = length(x);
-duration = x_length / fs;
+%% Read WAV File and get its properties
+[x, fs] = audioread('AUDIOPRUEBA3.wav'); 
+x = x(:,1); % Solo necesitamos un canal de las pistas
+x_size = size(x);
+x_length = x_size(1);
+duration = x_size(1) / fs;
 
-% Mostrar información básica
-fprintf('Frecuencia de muestreo: %d Hz\n', fs);
-fprintf('Duración de la señal: %f segundos\n', duration);
+fprintf('Valor de fs: %d\n', fs);
 
-% Graficar la señal en el dominio del tiempo
-t = linspace(0, duration, x_length);
-figure;
-plot(t, x);
-title('Señal de audio en el dominio del tiempo');
+%% Plot and play the DTMF audio
+T = duration / x_length; % Tiempo de duración entre muestras
+y = linspace(0, duration, x_length);
+x_int = round(x .* 1024 - 1); % Máximo 1024-1, 10 bits AD
+
+figure(1);
+plot(y, x_int);
+title('Secuencia DTMF en el dominio del tiempo');
 xlabel('Tiempo (s)');
-ylabel('Amplitud');
+axis([0 duration -2048 2048]);
 
-% Parámetros de la ventana
-wlen = 500; % Longitud de la ventana
-inc = 250; % Incremento entre ventanas
+soundsc(x_int, fs); % Reproducir los tonos DTMF
 
-% Dividir la señal en segmentos
-x_frames = enframe(x, wlen, inc);
-% Frecuencias DTMF
-low_freqs = [697, 770, 852, 941];
-high_freqs = [1209, 1336, 1477, 1633];
-tolerance = 0.5; % Tolerancia en Hz para la detección de frecuencias
+%% Framing utilizando la función 'enframe'
+wlen = 500;
+inc = 250;
+x_frame = enframe(x, wlen, inc)';
+x_energy = sum(x_frame .* x_frame);
 
-num_frames = size(x_frames, 1);
-detected_digits = [];
+figure(2);
+plot(x_energy);
+title('Energía en corto tiempo de la secuencia DTMF');
 
-for frame_idx = 1:num_frames
-    frame = x_frames(frame_idx, :);
-    
-    % Calcular la FFT del segmento
-    N = 2^nextpow2(length(frame)); % Asegurarse de que N es una potencia de 2
-    X = fft(frame, N);
-    f = (0:N-1)*(fs/N);
-    X_magnitude = abs(X);
+Emax = max(x_energy);      % Encontrar la máxima magnitud de energía
+x = [x; 0];
+threshold = 0.6 * Emax;    % Establecer umbral de energía para separar los dígitos
+eindex = find(x_energy > threshold);
+dseg = findSegment(eindex);
+dl = length(dseg);
 
-    % Identificar las componentes de frecuencia DTMF
-    detected_low_freq = NaN;
-    detected_high_freq = NaN;
+phone_number = cell(1, dl); % Almacenar los números de teléfono detectados
 
-    for i = 1:length(low_freqs)
-        [~, idx] = min(abs(f - low_freqs(i)));
-        if X_magnitude(idx) > mean(X_magnitude) + tolerance
-            detected_low_freq = low_freqs(i);
-            break;
-        end
-    end
-
-    for i = 1:length(high_freqs)
-        [~, idx] = min(abs(f - high_freqs(i)));
-        if X_magnitude(idx) > mean(X_magnitude) + tolerance
-            detected_high_freq = high_freqs(i);
-            break;
-        end
-    end
-
-    % Mapear las frecuencias detectadas a los dígitos DTMF
-    if ~isnan(detected_low_freq) && ~isnan(detected_high_freq)
-        if detected_low_freq == 697
-            if detected_high_freq == 1209
-                digit = '1';
-            elseif detected_high_freq == 1336
-                digit = '2';
-            elseif detected_high_freq == 1477
-                digit = '3';
-            elseif detected_high_freq == 1633
-                digit = 'A';
-            end
-        elseif detected_low_freq == 770
-            if detected_high_freq == 1209
-                digit = '4';
-            elseif detected_high_freq == 1336
-                digit = '5';
-            elseif detected_high_freq == 1477
-                digit = '6';
-            elseif detected_high_freq == 1633
-                digit = 'B';
-            end
-        elseif detected_low_freq == 852
-            if detected_high_freq == 1209
-                digit = '7';
-            elseif detected_high_freq == 1336
-                digit = '8';
-            elseif detected_high_freq == 1477
-                digit = '9';
-            elseif detected_high_freq == 1633
-                digit = 'C';
-            end
-        elseif detected_low_freq == 941
-            if detected_high_freq == 1209
-                digit = '*';
-            elseif detected_high_freq == 1336
-                digit = '0';
-            elseif detected_high_freq == 1477
-                digit = '#';
-            elseif detected_high_freq == 1633
-                digit = 'D';
-            end
-        else
-            digit = 'Desconocido';
-        end
-        detected_digits = [detected_digits, digit];
-    end
+%% Detectar los dígitos
+for k = 1:dl
+    n1 = dseg(k).begin;
+    n2 = dseg(k).end;
+    x1 = (n1 - 1) * inc + 1;
+    x2 = (n2 - 1) * inc + 1;
+    h = x(x1:x2);  % Puntos de datos en cada segmento
+    xl = length(h);
+    [keyH, keyL, ~] = dtmf_G2(h, fs); % Utilizar la función modificada para detectar los dígitos
+    keydig = fk2dig(keyH, keyL);
+    fprintf('%4d   %4d   %4d   %s\n', k, keyH, keyL, keydig);
+    phone_number{k} = keydig;
 end
 
-% Mostrar los dígitos detectados
-fprintf('Dígitos DTMF detectados: %s\n', detected_digits);
+%% Mostrar resultados
+disp('Números de teléfono detectados:');
+disp(phone_number);
